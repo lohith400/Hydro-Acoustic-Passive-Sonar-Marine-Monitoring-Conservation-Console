@@ -1,697 +1,349 @@
 /**
  * App.jsx — Hydro-Acoustic Passive Sonar Marine Monitoring & Conservation Console
  *
- * State Machine:
- *   IDLE     → No file selected or analysis not started
- *   LOADING  → POST request in-flight to FastAPI backend
- *   SUCCESS  → API returned valid JSON; sub-state determined by highest probability class
- *   ERROR    → Network failure or malformed response
+ * Design: Clean ocean-deep blue. Breathable. Only essential info.
+ * Inspired by: Voyah maritime brand + Metalloinvest aerial aesthetic.
  *
- * Backend Contract:
- *   POST http://localhost:8000/api/v1/analyze-hydrophone
- *   Body: FormData { file: <wav File> }
- *   Response: { "Container_Ship": float, "Marine_Mammal": float }
+ * State Machine:
+ *   IDLE    → File not yet analysed — sonar placeholder
+ *   LOADING → POST in-flight — ring spinner
+ *   VESSEL  → Container_Ship dominant — amber result
+ *   MAMMAL  → Marine_Mammal dominant — emerald result
+ *   ERROR   → Network / parse failure — rose alert
+ *
+ * API: POST http://localhost:8000/api/v1/analyze-hydrophone
+ *      Body: FormData { file: <wav File> }
+ *      Response: { Container_Ship: float, Marine_Mammal: float }
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  Waves,
-  Ship,
-  ShieldAlert,
-  AlertTriangle,
-  Upload,
-  FileAudio,
-  Activity,
-  Radio,
-  Anchor,
-  Cpu,
-  X,
-  CheckCircle2,
+  Waves, Ship, ShieldAlert, AlertTriangle,
+  Upload, FileAudio, Activity, Anchor, X,
 } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const API_ENDPOINT = 'http://localhost:8000/api/v1/analyze-hydrophone';
+const STATE = { IDLE: 'IDLE', LOADING: 'LOADING', VESSEL: 'VESSEL', MAMMAL: 'MAMMAL', ERROR: 'ERROR' };
 
-// Valid state identifiers for the right-column panel
-const UI_STATE = {
-  IDLE: 'IDLE',
-  LOADING: 'LOADING',
-  VESSEL: 'VESSEL',       // SUCCESS — Container_Ship dominant
-  MAMMAL: 'MAMMAL',       // SUCCESS — Marine_Mammal dominant
-  ERROR: 'ERROR',
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// ProbabilityBar — animated gradient track with a precision label
+// ─────────────────────────────────────────────────────────────────────────────
+function ProbabilityBar({ label, sublabel, value, barClass, labelClass, delay = 0 }) {
+  const [width, setWidth] = useState(0);
+  const pct = (value * 100).toFixed(1);
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setWidth(value * 100), delay + 60);
+    return () => clearTimeout(t);
+  }, [value, delay]);
 
-/**
- * SystemStatusBadge — Pulsing "CNN INFERENCE NODE OPERATIONAL" pill in the header.
- */
-function SystemStatusBadge() {
   return (
-    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide">
-      {/* Animated green pulse dot */}
-      <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-      </span>
-      CNN INFERENCE NODE OPERATIONAL
-    </div>
-  );
-}
-
-/**
- * ProbabilityBar — Animated horizontal progress bar for a single class score.
- *
- * @param {string}  label     — Display label (e.g. "Container Ship")
- * @param {number}  value     — Float 0.0–1.0
- * @param {string}  barColor  — Tailwind bg class for the fill
- * @param {string}  textColor — Tailwind text class for the percentage
- */
-function ProbabilityBar({ label, value, barColor, textColor }) {
-  const pct = (value * 100).toFixed(2);
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-600">{label}</span>
-        <span className={`font-mono-data text-sm font-semibold tabular-nums ${textColor}`}>
-          {pct}%
+    <div className="space-y-2" style={{ animation: `rise 0.5s ${delay}ms cubic-bezier(.22,1,.36,1) both` }}>
+      <div className="flex items-end justify-between">
+        <div>
+          <p className={`text-xs font-semibold tracking-wide ${labelClass}`}>{label}</p>
+          <p className="text-[10px] text-white/30 mt-0.5">{sublabel}</p>
+        </div>
+        <span className={`font-mono-data text-xl font-bold tabular-nums ${labelClass}`}>
+          {pct}<span className="text-sm font-normal opacity-60">%</span>
         </span>
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+      {/* Track */}
+      <div className="h-1.5 w-full rounded-full bg-white/8 overflow-hidden">
         <div
-          className={`h-3 rounded-full transition-all duration-700 ease-out ${barColor}`}
-          style={{ width: `${pct}%` }}
+          className={`h-full rounded-full transition-all duration-1000 ease-out ${barClass}`}
+          style={{ width: `${width}%` }}
         />
       </div>
     </div>
   );
 }
 
-/**
- * RawReadout — Monospace key/value metadata row used in the telemetry panel.
- */
-function RawReadout({ label, value, valueClass = 'text-teal-600' }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// SonarRing — decorative idle animation
+// ─────────────────────────────────────────────────────────────────────────────
+function SonarRing() {
   return (
-    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
-      <span className="text-xs text-slate-500 uppercase tracking-widest font-medium">{label}</span>
-      <span className={`font-mono-data text-xs font-semibold ${valueClass}`}>{value}</span>
+    <div className="relative flex items-center justify-center w-24 h-24 mx-auto mb-6">
+      <div className="absolute inset-0 rounded-full border border-cyan-400/10 animate-sonar" />
+      <div className="absolute inset-0 rounded-full border border-cyan-400/8 animate-sonar" style={{ animationDelay: '0.9s' }} />
+      <div className="absolute inset-3 rounded-full border border-cyan-400/12" />
+      <div className="absolute inset-6 rounded-full border border-cyan-400/18" />
+      <Waves className="w-8 h-8 text-cyan-400/50" strokeWidth={1.2} />
     </div>
   );
 }
 
-// ─── Right Column Panel States ────────────────────────────────────────────────
-
-/**
- * IdlePanel — Default state. Faint placeholder grid with a Waves icon.
- */
-function IdlePanel() {
+// ─────────────────────────────────────────────────────────────────────────────
+// Spinner — used in LOADING state
+// ─────────────────────────────────────────────────────────────────────────────
+function Spinner() {
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[340px] rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/60 p-10 text-center">
-      {/* Decorative background waveform grid */}
-      <div className="relative mb-6">
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-28 h-28 rounded-full bg-teal-50 border border-teal-100 animate-pulse-slow" />
-        </div>
-        <Waves className="relative z-10 w-14 h-14 text-teal-300 mx-auto" strokeWidth={1.2} />
-      </div>
-      <h3 className="text-slate-400 font-semibold text-sm tracking-widest uppercase mb-2">
-        Acoustic Feed Standby
-      </h3>
-      <p className="text-slate-400 text-xs leading-relaxed max-w-xs">
-        Awaiting hydro-acoustic wave feed input…
-        <br />
-        Select a <span className="font-mono-data text-slate-500">.wav</span> file to process telemetry.
-      </p>
-      {/* Decorative scan lines */}
-      <div className="mt-8 flex gap-1.5 items-end h-8">
-        {[4, 6, 9, 5, 7, 11, 6, 8, 4, 7, 10, 5, 8, 6].map((h, i) => (
-          <div
-            key={i}
-            className="w-1.5 rounded-sm bg-slate-200"
-            style={{ height: `${h * 4}px` }}
-          />
-        ))}
-      </div>
+    <div className="relative w-16 h-16 mx-auto mb-6">
+      <svg className="absolute inset-0 w-full h-full animate-spin-cw" viewBox="0 0 64 64" fill="none">
+        <circle cx="32" cy="32" r="28" stroke="rgba(34,211,238,0.08)" strokeWidth="1.5" />
+        <circle cx="32" cy="32" r="28" stroke="url(#grad-a)" strokeWidth="1.5"
+          strokeDasharray="120 56" strokeLinecap="round" />
+        <defs>
+          <linearGradient id="grad-a" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#22d3ee" stopOpacity="0.9" />
+            <stop offset="1" stopColor="#22d3ee" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <svg className="absolute inset-3 w-[calc(100%-1.5rem)] h-[calc(100%-1.5rem)] animate-spin-ccw" viewBox="0 0 40 40" fill="none">
+        <circle cx="20" cy="20" r="16" stroke="rgba(34,211,238,0.06)" strokeWidth="1" />
+        <circle cx="20" cy="20" r="16" stroke="url(#grad-b)" strokeWidth="1"
+          strokeDasharray="40 60" strokeLinecap="round" />
+        <defs>
+          <linearGradient id="grad-b" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#06b6d4" stopOpacity="0.7" />
+            <stop offset="1" stopColor="#06b6d4" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <Activity className="absolute inset-0 m-auto w-5 h-5 text-cyan-400/70" />
     </div>
   );
 }
 
-/**
- * LoadingPanel — In-flight state. Spinner + STFT processing description.
- */
-function LoadingPanel() {
-  return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[340px] rounded-xl border border-teal-200 bg-teal-50/40 p-10 text-center">
-      {/* Circular spinner */}
-      <div className="relative w-16 h-16 mb-6">
-        <div className="absolute inset-0 rounded-full border-4 border-teal-100" />
-        <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-teal-500 animate-spin" />
-        <Activity className="absolute inset-0 m-auto w-6 h-6 text-teal-500" />
-      </div>
-      <h3 className="text-teal-700 font-bold text-sm tracking-widest uppercase mb-3">
-        Processing Signal
-      </h3>
-      <p className="text-teal-600/80 text-xs leading-relaxed max-w-sm">
-        Computing Short-Time Fourier Transform (STFT) &amp; Generating
-        <br />
-        Log-Mel Spectrogram Matrix Tensors…
-      </p>
-      {/* Animated scan bar */}
-      <div className="mt-8 w-full max-w-xs h-1 bg-teal-100 rounded-full overflow-hidden">
-        <div className="h-full bg-teal-400 rounded-full animate-[scan_1.5s_ease-in-out_infinite]"
-          style={{
-            animation: 'scan 1.6s ease-in-out infinite',
-          }}
-        />
-      </div>
-      <style>{`
-        @keyframes scan {
-          0%   { width: 0%;   margin-left: 0%; }
-          50%  { width: 60%;  margin-left: 20%; }
-          100% { width: 0%;   margin-left: 100%; }
-        }
-      `}</style>
-      <p className="mt-3 text-teal-500/70 font-mono-data text-[10px] tracking-widest">
-        CNN INFERENCE ENGINE ACTIVE
-      </p>
-    </div>
-  );
-}
-
-/**
- * VesselPanel — Container_Ship dominant. Amber-themed alert card.
- *
- * @param {{ Container_Ship: number, Marine_Mammal: number }} scores
- * @param {string} fileName
- */
-function VesselPanel({ scores, fileName }) {
-  return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-6 space-y-5">
-      {/* ── Detection header ── */}
-      <div className="flex items-start gap-4">
-        <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center">
-          <Ship className="w-6 h-6 text-amber-600" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-500 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200">
-              CLASS 0 — VESSEL ISOLATED
-            </span>
-          </div>
-          <h2 className="text-base font-bold text-amber-800 leading-tight">
-            COMMERCIAL TRAFFIC DETECTED
-          </h2>
-          <p className="text-xs text-amber-700/80 mt-1 leading-relaxed">
-            Low-frequency propeller cavitation signature isolated. Logged to regional maritime monitoring grid.
-          </p>
-        </div>
-      </div>
-
-      {/* ── Probability meters ── */}
-      <div className="bg-white/70 rounded-lg border border-amber-100 p-4 space-y-4">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400 mb-3">
-          Acoustic Classification Confidence Matrix
-        </p>
-        <ProbabilityBar
-          label="Container Ship / Vessel"
-          value={scores.Container_Ship}
-          barColor="bg-amber-400"
-          textColor="text-amber-600"
-        />
-        <ProbabilityBar
-          label="Marine Mammal / Cetacean"
-          value={scores.Marine_Mammal}
-          barColor="bg-emerald-400"
-          textColor="text-emerald-600"
-        />
-      </div>
-
-      {/* ── Telemetry readouts ── */}
-      <div className="bg-white/70 rounded-lg border border-amber-100 p-4">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400 mb-3">
-          Signal Metadata
-        </p>
-        <RawReadout label="Source File" value={fileName} valueClass="text-slate-600" />
-        <RawReadout label="Sample Rate" value="22,050 Hz" />
-        <RawReadout label="Chunk Duration" value="5.00 s" />
-        <RawReadout label="Mel Bands" value="128 × 128" />
-        <RawReadout label="Detection Class" value="Container_Ship" valueClass="text-amber-600" />
-        <RawReadout
-          label="Confidence"
-          value={`${(scores.Container_Ship * 100).toFixed(2)}%`}
-          valueClass="text-amber-600"
-        />
-        <RawReadout label="Compliance Action" value="Log to Grid" valueClass="text-slate-500" />
-      </div>
-
-      {/* ── Status footer ── */}
-      <div className="flex items-center gap-2 text-amber-600 bg-amber-100/60 rounded-lg px-3 py-2 border border-amber-200">
-        <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-        <p className="text-xs font-medium">
-          Vessel signature logged to regional maritime monitoring grid.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/**
- * MammalPanel — Marine_Mammal dominant. Emerald-themed ecological alert.
- *
- * @param {{ Container_Ship: number, Marine_Mammal: number }} scores
- * @param {string} fileName
- */
-function MammalPanel({ scores, fileName }) {
-  return (
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-6 space-y-5">
-      {/* ── Detection header ── */}
-      <div className="flex items-start gap-4">
-        <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-emerald-100 border border-emerald-200 flex items-center justify-center">
-          <ShieldAlert className="w-6 h-6 text-emerald-600" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold tracking-widest uppercase text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
-              CLASS 1 — MAMMAL ISOLATED
-            </span>
-          </div>
-          <h2 className="text-base font-bold text-emerald-800 leading-tight">
-            ECOLOGICAL PROXIMITY ALERT
-          </h2>
-          <p className="text-xs text-emerald-700/80 mt-1 leading-relaxed">
-            Protected cetacean vocalization matrix identified. Triggering automatic regional port
-            compliance rules: Mandating immediate ship speed reduction to{' '}
-            <strong>10 knots</strong>.
-          </p>
-        </div>
-      </div>
-
-      {/* ── Probability meters ── */}
-      <div className="bg-white/70 rounded-lg border border-emerald-100 p-4 space-y-4">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400 mb-3">
-          Acoustic Classification Confidence Matrix
-        </p>
-        <ProbabilityBar
-          label="Marine Mammal / Cetacean"
-          value={scores.Marine_Mammal}
-          barColor="bg-emerald-500"
-          textColor="text-emerald-600"
-        />
-        <ProbabilityBar
-          label="Container Ship / Vessel"
-          value={scores.Container_Ship}
-          barColor="bg-amber-400"
-          textColor="text-amber-600"
-        />
-      </div>
-
-      {/* ── Telemetry readouts ── */}
-      <div className="bg-white/70 rounded-lg border border-emerald-100 p-4">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400 mb-3">
-          Signal Metadata
-        </p>
-        <RawReadout label="Source File" value={fileName} valueClass="text-slate-600" />
-        <RawReadout label="Sample Rate" value="22,050 Hz" />
-        <RawReadout label="Chunk Duration" value="5.00 s" />
-        <RawReadout label="Mel Bands" value="128 × 128" />
-        <RawReadout label="Detection Class" value="Marine_Mammal" valueClass="text-emerald-600" />
-        <RawReadout
-          label="Confidence"
-          value={`${(scores.Marine_Mammal * 100).toFixed(2)}%`}
-          valueClass="text-emerald-600"
-        />
-        <RawReadout label="Compliance Action" value="Speed Limit: 10 kn" valueClass="text-rose-500" />
-      </div>
-
-      {/* ── Compliance alert footer ── */}
-      <div className="flex items-center gap-2 text-emerald-700 bg-emerald-100/60 rounded-lg px-3 py-2 border border-emerald-200">
-        <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-        <p className="text-xs font-medium">
-          Port authority notified. Speed reduction protocol activated in adjacent shipping lanes.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/**
- * ErrorPanel — Network or parsing failure state. Soft-rose warning card.
- *
- * @param {string} message — Error detail to display
- */
-function ErrorPanel({ message }) {
-  return (
-    <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 space-y-4">
-      <div className="flex items-start gap-4">
-        <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-rose-100 border border-rose-200 flex items-center justify-center">
-          <AlertTriangle className="w-6 h-6 text-rose-500" />
-        </div>
-        <div>
-          <span className="text-[10px] font-semibold tracking-widest uppercase text-rose-400 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 inline-block mb-1">
-            SYSTEM FAULT — INFERENCE FAILURE
-          </span>
-          <h2 className="text-base font-bold text-rose-800">
-            SIGNAL PROCESSING ERROR
-          </h2>
-          <p className="text-xs text-rose-600/80 mt-1 leading-relaxed">
-            Network connection failure or unreadable audio header profile detected.
-            Verify the FastAPI backend is running on port 8000 and the file is a valid
-            <span className="font-mono-data text-rose-700"> .wav</span> recording.
-          </p>
-        </div>
-      </div>
-
-      {/* Error detail block */}
-      {message && (
-        <div className="bg-white/70 rounded-lg border border-rose-200 p-3">
-          <p className="text-[10px] font-semibold tracking-widest uppercase text-slate-400 mb-1">
-            Error Detail
-          </p>
-          <p className="font-mono-data text-xs text-rose-600 break-all leading-relaxed">
-            {message}
-          </p>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 text-rose-600 bg-rose-100/60 rounded-lg px-3 py-2 border border-rose-200">
-        <Radio className="w-4 h-4 flex-shrink-0" />
-        <p className="text-xs font-medium">
-          Ensure <span className="font-mono-data">uvicorn main:app --port 8000</span> is running and CORS is enabled.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main App Component ───────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Main App
+// ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  // ── State ──
-  /** @type {[File|null, Function]} — Selected .wav file */
-  const [selectedFile, setSelectedFile] = useState(null);
-
-  /**
-   * uiState — controls which right-column panel renders
-   * Values: 'IDLE' | 'LOADING' | 'VESSEL' | 'MAMMAL' | 'ERROR'
-   */
-  const [uiState, setUiState] = useState(UI_STATE.IDLE);
-
-  /** Raw backend scores: { Container_Ship: float, Marine_Mammal: float } */
-  const [scores, setScores] = useState({ Container_Ship: 0, Marine_Mammal: 0 });
-
-  /** Error message string for the ERROR panel */
+  const [file, setFile]         = useState(null);
+  const [uiState, setUiState]   = useState(STATE.IDLE);
+  const [scores, setScores]     = useState({ Container_Ship: 0, Marine_Mammal: 0 });
   const [errorMsg, setErrorMsg] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef                = useRef(null);
 
-  /** Drag-over highlight flag */
-  const [isDragOver, setIsDragOver] = useState(false);
-
-  /** Hidden file input ref */
-  const fileInputRef = useRef(null);
-
-  // ── File Selection Handlers ──
-
-  /**
-   * handleFileSelect — validates .wav extension then stores the File object.
-   * Called by both the click-to-browse input and the drag-and-drop handler.
-   */
-  const handleFileSelect = useCallback((file) => {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.wav')) {
-      setErrorMsg('Invalid file type. Only Linear PCM .wav archives are accepted.');
-      setUiState(UI_STATE.ERROR);
+  // ── File handling ──
+  const accept = useCallback((f) => {
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.wav')) {
+      setErrorMsg('Only .wav files are accepted.');
+      setUiState(STATE.ERROR);
       return;
     }
-    setSelectedFile(file);
-    // Reset any previous results when a new file is chosen
-    setUiState(UI_STATE.IDLE);
-    setScores({ Container_Ship: 0, Marine_Mammal: 0 });
+    setFile(f);
+    setUiState(STATE.IDLE);
     setErrorMsg('');
   }, []);
 
-  /** onChange handler for the hidden <input type="file"> */
-  const onInputChange = (e) => {
-    if (e.target.files?.[0]) handleFileSelect(e.target.files[0]);
-  };
-
-  /** Clear the selected file and reset to idle */
-  const clearFile = () => {
-    setSelectedFile(null);
-    setUiState(UI_STATE.IDLE);
+  const clear = () => {
+    setFile(null);
+    setUiState(STATE.IDLE);
     setScores({ Container_Ship: 0, Marine_Mammal: 0 });
     setErrorMsg('');
-    // Reset the hidden input so the same file can be re-selected
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (inputRef.current) inputRef.current.value = '';
   };
 
-  // ── Drag-and-Drop Handlers ──
-  const onDragOver = (e) => { e.preventDefault(); setIsDragOver(true); };
-  const onDragLeave = () => setIsDragOver(false);
-  const onDrop = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleFileSelect(file);
-  };
-
-  // ── API Call ──
-
-  /**
-   * runAnalysis — Sends the selected file to the FastAPI backend via FormData POST.
-   * Updates uiState through the LOADING → (VESSEL | MAMMAL | ERROR) lifecycle.
-   */
-  const runAnalysis = async () => {
-    if (!selectedFile) return;
-
-    // Transition to LOADING state — re-renders right column to spinner
-    setUiState(UI_STATE.LOADING);
+  // ── Analysis ──
+  const analyse = async () => {
+    if (!file) return;
+    setUiState(STATE.LOADING);
     setErrorMsg('');
-
     try {
-      // Build multipart form payload; key must be exactly "file" per backend contract
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        body: formData,
-        // Do NOT set Content-Type header — browser must set it with boundary param
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} — ${response.statusText}`);
-      }
-
-      // Parse JSON: { "Container_Ship": float, "Marine_Mammal": float }
-      const data = await response.json();
-      const shipScore   = data?.Container_Ship  ?? 0;
-      const mammalScore = data?.Marine_Mammal ?? 0;
-
-      setScores({ Container_Ship: shipScore, Marine_Mammal: mammalScore });
-
-      // Determine dominant class and set final SUCCESS state
-      if (mammalScore > shipScore) {
-        setUiState(UI_STATE.MAMMAL);  // Marine mammal dominant → ecological alert
-      } else {
-        setUiState(UI_STATE.VESSEL);  // Container ship dominant → traffic detection
-      }
-
-    } catch (err) {
-      // Network error, timeout, or unexpected response format
-      setErrorMsg(err.message || 'Unknown network error. Check backend connection.');
-      setUiState(UI_STATE.ERROR);
+      const form = new FormData();
+      form.append('file', file);          // key must be exactly "file"
+      const res  = await fetch(API_ENDPOINT, { method: 'POST', body: form });
+      if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.statusText}`);
+      const data = await res.json();
+      const ship   = data?.Container_Ship  ?? 0;
+      const mammal = data?.Marine_Mammal   ?? 0;
+      setScores({ Container_Ship: ship, Marine_Mammal: mammal });
+      setUiState(mammal > ship ? STATE.MAMMAL : STATE.VESSEL);
+    } catch (e) {
+      setErrorMsg(e.message || 'Unknown network error.');
+      setUiState(STATE.ERROR);
     }
   };
 
-  // ── Derived booleans ──
-  const isLoading   = uiState === UI_STATE.LOADING;
-  const canAnalyze  = !!selectedFile && !isLoading;
+  const loading    = uiState === STATE.LOADING;
+  const canAnalyse = !!file && !loading;
 
-  // ── Render ──
+  // ── Result panel config by state ──
+  const resultConfig = {
+    [STATE.VESSEL]: {
+      icon: <Ship  className="w-6 h-6 text-amber-400" />,
+      badge: 'VESSEL DETECTED',
+      badgeClass: 'text-amber-400 border-amber-400/30 bg-amber-400/8',
+      title: 'Commercial Traffic Detected',
+      desc: 'Low-frequency propeller cavitation signature isolated and logged to regional maritime grid.',
+      accentBg: 'bg-amber-400/5',
+      accentBorder: 'border-amber-400/12',
+    },
+    [STATE.MAMMAL]: {
+      icon: <ShieldAlert className="w-6 h-6 text-emerald-400" />,
+      badge: 'MAMMAL DETECTED',
+      badgeClass: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/8',
+      title: 'Ecological Proximity Alert',
+      desc: 'Protected cetacean vocalization identified. Speed reduction to 10 knots mandated in adjacent lanes.',
+      accentBg: 'bg-emerald-400/5',
+      accentBorder: 'border-emerald-400/12',
+    },
+  };
+  const rc = resultConfig[uiState];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
+    <div className="min-h-screen font-sans"
+      style={{ background: 'linear-gradient(160deg, #0c1e3a 0%, #081628 40%, #051020 100%)' }}>
 
-      {/* ════════════════════════════════════════════════════════════════
-          HEADER BANNER
-      ════════════════════════════════════════════════════════════════ */}
-      <header className="bg-white border-b border-slate-200 shadow-sm">
-        <div className="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+      {/* ── Ambient background glows ── */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-32 -left-32 w-[600px] h-[600px] rounded-full opacity-20 animate-pulse-glow"
+          style={{ background: 'radial-gradient(circle, #1a4a7a 0%, transparent 70%)' }} />
+        <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] rounded-full opacity-15 animate-pulse-glow"
+          style={{ background: 'radial-gradient(circle, #0e3d5c 0%, transparent 70%)', animationDelay: '1.5s' }} />
+      </div>
 
-          {/* Left: Logo + Title block */}
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="flex-shrink-0 w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center shadow-sm">
-              <Anchor className="w-5 h-5 text-white" strokeWidth={2} />
+      {/* ════════════════════════════
+          HEADER
+      ════════════════════════════ */}
+      <header className="relative border-b border-white/6">
+        <div className="max-w-5xl mx-auto px-8 py-5 flex items-center justify-between">
+          {/* Logo + Name */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center">
+              <Anchor className="w-4 h-4 text-cyan-400" strokeWidth={2} />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-sm font-bold tracking-widest text-slate-800 uppercase leading-tight truncate">
-                Hydro-Acoustic Marine Monitoring System
+            <div>
+              <h1 className="text-[13px] font-semibold tracking-[0.2em] text-white/90 uppercase">
+                Marine Monitoring Console
               </h1>
-              <p className="text-[11px] text-slate-400 tracking-wide leading-tight mt-0.5 truncate">
-                Passive Sonar Signal Analysis Platform — Automated Cetacean Protection &amp; Vessel Tracking
+              <p className="text-[10px] text-white/25 tracking-widest mt-0.5">
+                Passive Sonar · Cetacean Protection · Vessel Tracking
               </p>
             </div>
           </div>
-
-          {/* Right: Status badge */}
-          <div className="flex-shrink-0">
-            <SystemStatusBadge />
+          {/* Live status */}
+          <div className="flex items-center gap-2 text-[10px] font-mono-data text-cyan-400/70 tracking-widest uppercase">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
+            </span>
+            CNN Node Operational
           </div>
         </div>
       </header>
 
-      {/* ════════════════════════════════════════════════════════════════
-          MAIN TWO-COLUMN COMMAND VIEW
-      ════════════════════════════════════════════════════════════════ */}
-      <main className="max-w-screen-xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-12 gap-6">
+      {/* ════════════════════════════
+          MAIN CONTENT
+      ════════════════════════════ */}
+      <main className="relative max-w-5xl mx-auto px-8 py-16">
 
-          {/* ═══════════════════════════════════
-              LEFT COLUMN — Control & Ingestion
-              5 columns wide on lg+, full width on mobile
-          ═══════════════════════════════════ */}
-          <aside className="col-span-12 lg:col-span-5 space-y-5">
+        {/* Page title block */}
+        <div className="mb-14 text-center">
+          <p className="text-[11px] font-mono-data text-cyan-400/50 tracking-[0.3em] uppercase mb-3">
+            Hydro-Acoustic Signal Analysis
+          </p>
+          <h2 className="text-3xl font-light text-white/80 tracking-tight leading-snug">
+            Upload a hydrophone recording
+            <br />
+            <span className="text-white font-semibold">to identify acoustic signatures.</span>
+          </h2>
+        </div>
 
-            {/* ── System Info Card ── */}
-            <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <Cpu className="w-4 h-4 text-teal-600" />
-                <h2 className="text-xs font-bold tracking-widest uppercase text-slate-500">
-                  System Node
-                </h2>
-              </div>
-              <div className="space-y-0">
-                <RawReadout label="Inference Engine"  value="TensorFlow 2.21 / Keras" />
-                <RawReadout label="Model Architecture" value="2D-CNN · 3.7M params" />
-                <RawReadout label="Classes"            value="Container_Ship · Marine_Mammal" />
-                <RawReadout label="Input Tensor"       value="128 × 128 × 1 (Log-Mel)" />
-                <RawReadout label="Sampling Rate"      value="22,050 Hz target" />
-                <RawReadout label="Backend Endpoint"   value="localhost:8000" />
-              </div>
-            </div>
+        {/* Two-column card grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-            {/* ── Ingestion Card — Drag & Drop Zone ── */}
-            <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <Upload className="w-4 h-4 text-teal-600" />
-                <h2 className="text-xs font-bold tracking-widest uppercase text-slate-500">
-                  Hydrophone Telemetry Ingestion
-                </h2>
-              </div>
+          {/* ─────────────────────────
+              LEFT — Upload + Trigger
+          ───────────────────────── */}
+          <div className="flex flex-col gap-4">
 
-              {/* Drop Zone */}
-              <div
-                role="button"
-                tabIndex={0}
-                aria-label="Click or drag a .wav file to upload"
-                onClick={() => !selectedFile && fileInputRef.current?.click()}
-                onKeyDown={(e) => e.key === 'Enter' && !selectedFile && fileInputRef.current?.click()}
-                onDragOver={onDragOver}
-                onDragLeave={onDragLeave}
-                onDrop={onDrop}
-                className={`
-                  relative flex flex-col items-center justify-center
-                  rounded-xl border-2 border-dashed p-8 text-center
-                  transition-all duration-200 cursor-pointer select-none
-                  ${selectedFile
-                    ? 'border-teal-300 bg-teal-50/40 cursor-default'
-                    : isDragOver
-                      ? 'border-teal-400 bg-teal-50 scale-[1.01]'
-                      : 'border-slate-200 bg-slate-50/60 hover:border-teal-300 hover:bg-teal-50/30'
-                  }
-                `}
-              >
-                {/* Hidden file input */}
-                <input
-                  ref={fileInputRef}
-                  id="wav-file-input"
-                  type="file"
-                  accept=".wav,audio/wav,audio/x-wav"
-                  className="hidden"
-                  onChange={onInputChange}
-                />
-
-                {selectedFile ? (
-                  /* ── File Selected State ── */
-                  <div className="w-full">
-                    <div className="flex items-center gap-3 bg-white rounded-lg border border-teal-200 px-4 py-3">
-                      <div className="flex-shrink-0 w-9 h-9 bg-teal-100 rounded-lg flex items-center justify-center">
-                        <FileAudio className="w-5 h-5 text-teal-600" />
-                      </div>
-                      <div className="min-w-0 flex-1 text-left">
-                        <p className="text-sm font-semibold text-teal-800 truncate">
-                          {selectedFile.name}
-                        </p>
-                        <p className="text-xs text-teal-500 font-mono-data mt-0.5">
-                          {(selectedFile.size / 1024).toFixed(1)} KB · audio/wav
-                        </p>
-                      </div>
-                      {/* Clear file button */}
-                      <button
-                        id="clear-file-btn"
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); clearFile(); }}
-                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition-colors"
-                        aria-label="Clear selected file"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <p className="text-xs text-teal-500 mt-2 text-center">
-                      File staged and ready for inference
-                    </p>
-                  </div>
-                ) : (
-                  /* ── Empty Drop Zone ── */
-                  <>
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
-                      <Upload className="w-6 h-6 text-slate-400" />
-                    </div>
-                    <p className="text-sm font-semibold text-slate-500 mb-1">
-                      Drag &amp; drop a telemetry file
-                    </p>
-                    <p className="text-xs text-slate-400 mb-3">
-                      or{' '}
-                      <span className="text-teal-600 font-semibold underline underline-offset-2 cursor-pointer">
-                        browse to select
-                      </span>
-                    </p>
-                    {/* Metadata labels */}
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      <span className="font-mono-data text-[10px] tracking-wide text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                        Linear PCM Archive
-                      </span>
-                      <span className="font-mono-data text-[10px] tracking-wide text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                        22.05 kHz Target Subsampling Rate
-                      </span>
-                      <span className="font-mono-data text-[10px] tracking-wide text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                        .wav only
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* ── Primary Action Button ── */}
-            <button
-              id="analyze-btn"
-              type="button"
-              onClick={runAnalysis}
-              disabled={!canAnalyze}
+            {/* Drop zone */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="Click or drag a .wav file to upload"
+              onClick={() => !file && inputRef.current?.click()}
+              onKeyDown={(e) => e.key === 'Enter' && !file && inputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); accept(e.dataTransfer.files?.[0]); }}
               className={`
-                w-full flex items-center justify-center gap-3
-                rounded-xl px-6 py-4 text-sm font-bold tracking-widest uppercase
-                border transition-all duration-200 shadow-sm
-                focus:outline-none focus:ring-2 focus:ring-offset-2
-                ${canAnalyze
-                  ? 'bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white border-teal-700 focus:ring-teal-500 cursor-pointer'
-                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                relative flex flex-col items-center justify-center
+                rounded-2xl border-2 border-dashed p-10 text-center
+                transition-all duration-250 cursor-pointer select-none min-h-[220px]
+                ${file
+                  ? 'border-cyan-500/25 bg-cyan-500/4 cursor-default'
+                  : dragOver
+                    ? 'border-cyan-400/50 bg-cyan-400/6 scale-[1.01]'
+                    : 'border-white/10 bg-white/2 hover:border-cyan-500/30 hover:bg-cyan-500/3'
                 }
               `}
             >
-              {isLoading ? (
+              <input ref={inputRef} type="file" accept=".wav,audio/wav" className="hidden" id="wav-input"
+                onChange={(e) => accept(e.target.files?.[0])} />
+
+              {file ? (
+                /* File staged */
+                <div className="w-full animate-rise">
+                  <div className="flex items-center gap-3 bg-white/4 rounded-xl border border-white/8 px-4 py-3">
+                    <div className="w-9 h-9 rounded-lg bg-cyan-500/12 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
+                      <FileAudio className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-sm font-medium text-white/80 truncate">{file.name}</p>
+                      <p className="font-mono-data text-[10px] text-white/30 mt-0.5">
+                        {(file.size / 1024).toFixed(1)} KB · Linear PCM
+                      </p>
+                    </div>
+                    <button
+                      id="clear-btn"
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); clear(); }}
+                      className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-white/5 hover:bg-rose-400/15 text-white/30 hover:text-rose-400 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="font-mono-data text-[10px] text-cyan-500/40 tracking-widest mt-3 uppercase">
+                    Ready for inference
+                  </p>
+                </div>
+              ) : (
+                /* Empty */
                 <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  Analysing Signal…
+                  <Upload className="w-8 h-8 text-white/20 mb-4" />
+                  <p className="text-sm font-medium text-white/50">Drop a .wav file here</p>
+                  <p className="text-xs text-white/25 mt-1">
+                    or <span className="text-cyan-400/70 hover:text-cyan-400 transition-colors">browse to select</span>
+                  </p>
+                  <p className="font-mono-data text-[9px] text-white/15 mt-5 tracking-widest uppercase">
+                    Linear PCM · 22.05 kHz · .wav only
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Analyse button */}
+            <button
+              id="analyse-btn"
+              type="button"
+              onClick={analyse}
+              disabled={!canAnalyse}
+              className={`
+                relative w-full flex items-center justify-center gap-2.5
+                rounded-2xl py-4 text-[11px] font-semibold tracking-[0.2em] uppercase
+                transition-all duration-250 border overflow-hidden
+                focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:ring-offset-2 focus:ring-offset-[#081628]
+                ${canAnalyse
+                  ? 'bg-cyan-500/12 hover:bg-cyan-500/20 active:bg-cyan-500/28 text-cyan-300 border-cyan-500/25 hover:border-cyan-400/40 cursor-pointer shadow-[0_0_32px_rgba(34,211,238,0.07)] hover:shadow-[0_0_48px_rgba(34,211,238,0.14)]'
+                  : 'bg-white/3 text-white/20 border-white/6 cursor-not-allowed'
+                }
+              `}
+            >
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-cyan-400/25 border-t-cyan-400 animate-spin" />
+                  Analysing…
                 </>
               ) : (
                 <>
@@ -701,100 +353,150 @@ export default function App() {
               )}
             </button>
 
-            {/* ── Acoustic spectrum decorative bars ── */}
-            <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <Radio className="w-4 h-4 text-teal-600" />
-                <h2 className="text-xs font-bold tracking-widest uppercase text-slate-500">
-                  Frequency Spectrum Monitor
-                </h2>
-              </div>
-              <div className="flex items-end gap-0.5 h-16">
-                {Array.from({ length: 48 }, (_, i) => {
-                  const active = uiState === UI_STATE.LOADING || uiState === UI_STATE.VESSEL || uiState === UI_STATE.MAMMAL;
-                  const baseH = Math.sin(i * 0.4) * 30 + 35;
-                  const color = uiState === UI_STATE.MAMMAL ? 'bg-emerald-400'
-                    : uiState === UI_STATE.VESSEL ? 'bg-amber-400'
-                    : 'bg-teal-300';
-                  return (
-                    <div
-                      key={i}
-                      className={`flex-1 rounded-sm transition-all duration-500 ${color} ${active ? 'opacity-80' : 'opacity-30'}`}
-                      style={{
-                        height: active
-                          ? `${baseH + Math.random() * 20}%`
-                          : `${baseH * 0.4}%`,
-                      }}
-                    />
-                  );
-                })}
-              </div>
-              <div className="flex justify-between mt-2">
-                <span className="font-mono-data text-[9px] text-slate-300">20 Hz</span>
-                <span className="font-mono-data text-[9px] text-slate-300">10 kHz</span>
-              </div>
-            </div>
-
-          </aside>
-
-          {/* ═══════════════════════════════════
-              RIGHT COLUMN — Acoustic Analytics Matrix
-              7 columns wide on lg+, full width on mobile
-          ═══════════════════════════════════ */}
-          <section className="col-span-12 lg:col-span-7">
-
-            {/* Panel header */}
-            <div className="flex items-center gap-2 mb-4">
-              <Activity className="w-4 h-4 text-teal-600" />
-              <h2 className="text-xs font-bold tracking-widest uppercase text-slate-500">
-                Acoustic Analytics Matrix
-              </h2>
-              <div className="flex-1 h-px bg-slate-200" />
-              {/* Dynamic state indicator */}
-              <span className={`
-                text-[10px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full border
-                ${uiState === UI_STATE.IDLE    ? 'text-slate-400 bg-slate-100 border-slate-200'    : ''}
-                ${uiState === UI_STATE.LOADING ? 'text-teal-600 bg-teal-50 border-teal-200'         : ''}
-                ${uiState === UI_STATE.VESSEL  ? 'text-amber-600 bg-amber-50 border-amber-200'      : ''}
-                ${uiState === UI_STATE.MAMMAL  ? 'text-emerald-600 bg-emerald-50 border-emerald-200': ''}
-                ${uiState === UI_STATE.ERROR   ? 'text-rose-500 bg-rose-50 border-rose-200'         : ''}
-              `}>
-                {uiState === UI_STATE.IDLE    && 'STANDBY'}
-                {uiState === UI_STATE.LOADING && 'PROCESSING'}
-                {uiState === UI_STATE.VESSEL  && 'VESSEL DETECTED'}
-                {uiState === UI_STATE.MAMMAL  && 'MAMMAL DETECTED'}
-                {uiState === UI_STATE.ERROR   && 'SYSTEM FAULT'}
-              </span>
-            </div>
-
-            {/* ── Dynamic panel — switches based on uiState ── */}
-            {uiState === UI_STATE.IDLE && <IdlePanel />}
-            {uiState === UI_STATE.LOADING && <LoadingPanel />}
-            {uiState === UI_STATE.VESSEL && (
-              <VesselPanel scores={scores} fileName={selectedFile?.name ?? '—'} />
+            {/* Hint text */}
+            {!file && (
+              <p className="text-center text-[11px] text-white/20 leading-relaxed">
+                The model classifies underwater audio into<br />
+                <span className="text-white/35">commercial vessel</span> or <span className="text-white/35">marine mammal</span> signatures.
+              </p>
             )}
-            {uiState === UI_STATE.MAMMAL && (
-              <MammalPanel scores={scores} fileName={selectedFile?.name ?? '—'} />
-            )}
-            {uiState === UI_STATE.ERROR && <ErrorPanel message={errorMsg} />}
+          </div>
 
-          </section>
+          {/* ─────────────────────────
+              RIGHT — Result Panel
+          ───────────────────────── */}
+          <div
+            className={`
+              relative rounded-2xl border overflow-hidden min-h-[300px] flex flex-col
+              ${uiState === STATE.VESSEL ? 'border-amber-400/15 bg-amber-400/3'
+              : uiState === STATE.MAMMAL ? 'border-emerald-400/15 bg-emerald-400/3'
+              : uiState === STATE.ERROR  ? 'border-rose-400/15 bg-rose-400/3'
+              : 'border-white/6 bg-white/2'}
+            `}
+          >
+
+            {/* ── IDLE ── */}
+            {uiState === STATE.IDLE && (
+              <div className="flex-1 flex flex-col items-center justify-center p-10 text-center animate-rise">
+                <SonarRing />
+                <p className="text-[10px] font-mono-data text-white/20 tracking-[0.2em] uppercase mb-2">
+                  Awaiting Input
+                </p>
+                <p className="text-sm text-white/30 leading-relaxed">
+                  Select a .wav recording and click<br />Analyse to process telemetry.
+                </p>
+              </div>
+            )}
+
+            {/* ── LOADING ── */}
+            {uiState === STATE.LOADING && (
+              <div className="flex-1 flex flex-col items-center justify-center p-10 text-center animate-rise">
+                <Spinner />
+                <p className="text-[10px] font-mono-data text-cyan-400/50 tracking-[0.2em] uppercase mb-2">
+                  Processing
+                </p>
+                <p className="text-sm text-white/35 leading-relaxed">
+                  Computing STFT &amp; Log-Mel<br />spectrogram matrix tensors…
+                </p>
+              </div>
+            )}
+
+            {/* ── VESSEL or MAMMAL ── */}
+            {(uiState === STATE.VESSEL || uiState === STATE.MAMMAL) && rc && (
+              <div className="flex-1 flex flex-col p-8 animate-rise">
+                {/* Header */}
+                <div className="flex items-start gap-4 mb-8">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 border ${rc.accentBg} ${rc.accentBorder}`}>
+                    {rc.icon}
+                  </div>
+                  <div>
+                    <span className={`font-mono-data text-[10px] tracking-[0.18em] uppercase px-2.5 py-0.5 rounded-full border ${rc.badgeClass} inline-block mb-1.5`}>
+                      {rc.badge}
+                    </span>
+                    <h3 className="text-base font-semibold text-white/85 leading-tight">
+                      {rc.title}
+                    </h3>
+                    <p className="text-xs text-white/35 mt-1 leading-relaxed">{rc.desc}</p>
+                  </div>
+                </div>
+
+                {/* Probability bars */}
+                <div className="space-y-6 mt-auto">
+                  {uiState === STATE.VESSEL ? (
+                    <>
+                      <ProbabilityBar
+                        label="Container Ship"
+                        sublabel="Propeller cavitation signature"
+                        value={scores.Container_Ship}
+                        barClass="bg-gradient-to-r from-amber-600 via-orange-500 to-amber-400"
+                        labelClass="text-amber-400"
+                        delay={0}
+                      />
+                      <ProbabilityBar
+                        label="Marine Mammal"
+                        sublabel="Cetacean vocalization"
+                        value={scores.Marine_Mammal}
+                        barClass="bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400"
+                        labelClass="text-emerald-400/70"
+                        delay={140}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <ProbabilityBar
+                        label="Marine Mammal"
+                        sublabel="Cetacean vocalization"
+                        value={scores.Marine_Mammal}
+                        barClass="bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400"
+                        labelClass="text-emerald-400"
+                        delay={0}
+                      />
+                      <ProbabilityBar
+                        label="Container Ship"
+                        sublabel="Propeller cavitation signature"
+                        value={scores.Container_Ship}
+                        barClass="bg-gradient-to-r from-amber-600 via-orange-500 to-amber-400"
+                        labelClass="text-amber-400/70"
+                        delay={140}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── ERROR ── */}
+            {uiState === STATE.ERROR && (
+              <div className="flex-1 flex flex-col items-center justify-center p-10 text-center animate-rise">
+                <div className="w-11 h-11 rounded-xl bg-rose-400/8 border border-rose-400/20 flex items-center justify-center mb-5">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <p className="text-[10px] font-mono-data text-rose-400/60 tracking-[0.2em] uppercase mb-2">
+                  Inference Error
+                </p>
+                <p className="text-sm text-white/40 leading-relaxed mb-4">
+                  {errorMsg || 'Could not reach the inference backend.'}
+                </p>
+                <p className="font-mono-data text-[10px] text-white/20">
+                  Ensure <span className="text-white/35">main.py</span> is running on port 8000
+                </p>
+              </div>
+            )}
+
+          </div>
         </div>
-      </main>
 
-      {/* ════════════════════════════════════════════════════════════════
-          FOOTER
-      ════════════════════════════════════════════════════════════════ */}
-      <footer className="border-t border-slate-200 mt-8">
-        <div className="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between">
-          <p className="text-[11px] text-slate-400 font-mono-data tracking-wide">
-            OCEAN · Hydro-Acoustic Passive Sonar Marine Monitoring &amp; Conservation Console
-          </p>
-          <p className="text-[11px] text-slate-300 font-mono-data">
+        {/* Bottom info strip */}
+        <div className="mt-12 pt-8 border-t border-white/5 flex items-center justify-between">
+          <p className="font-mono-data text-[10px] text-white/15 tracking-widest uppercase">
             DeepShip · Watkins DB · TensorFlow 2.21
           </p>
+          <p className="font-mono-data text-[10px] text-white/15 tracking-widest uppercase">
+            2D-CNN · 128 × 128 Log-Mel · 22.05 kHz
+          </p>
         </div>
-      </footer>
+
+      </main>
     </div>
   );
 }

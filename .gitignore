@@ -1,32 +1,90 @@
-# Byte-compiled / optimized / DLL files
+# ============================================================
+# HYDRO-ACOUSTIC SONAR PROJECT — .gitignore
+# Only source code is pushed. All datasets, binaries, and
+# generated artifacts are excluded.
+# ============================================================
+
+# --- Python Bytecode & Cache ---
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
 
-# Environments
-.env
-.venv
-env/
+# --- Virtual Environment ---
+.venv/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
 
-# Model weights and large binaries
+# --- Environment Variables ---
+.env
+.env.*
+
+# ============================================================
+# DATASET DIRECTORIES (auto-downloaded, never committed)
+# ============================================================
+# DeepShip — cloned from GitHub
+DeepShip/
+
+# Watkins Marine Mammal Sound Database + all staged raw audio
+real_raw_data/
+
+# Any other raw audio or data directories
+data/
+datasets_cache/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.aiff
+
+# HuggingFace Hub local cache
+~/.cache/huggingface/
+.cache/
+
+# ============================================================
+# TRAINED MODEL WEIGHTS (large binaries, re-trainable)
+# ============================================================
 *.h5
+*.keras
 *.pb
 *.pt
 *.pth
 *.onnx
 *.pkl
+*.joblib
 
-# VS Code / IDE settings
+# SavedModel directories
+saved_model/
+
+# ============================================================
+# JUPYTER NOTEBOOK OUTPUTS (optional — remove if you want to
+# commit notebooks WITH their outputs)
+# ============================================================
+# Uncomment the next line to ignore all notebooks entirely:
+# *.ipynb
+
+# ============================================================
+# LOGS & TEMP FILES
+# ============================================================
+*.log
+*.tmp
+*.bak
+logs/
+runs/
+
+# ============================================================
+# IDE / EDITOR SETTINGS
+# ============================================================
 .vscode/
 .idea/
+*.code-workspace
 
-# OS-specific files
+# ============================================================
+# OS-SPECIFIC FILES
+# ============================================================
 .DS_Store
 Thumbs.db
+Desktop.ini

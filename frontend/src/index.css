@@ -1,0 +1,35 @@
+/* Tailwind CSS directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base layer overrides ── */
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-800;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* ── Custom utility classes ── */
+@layer utilities {
+  .font-mono-data {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+  }
+
+  /* Drag-over highlight for drop zone */
+  .drop-zone-active {
+    @apply border-teal-400 bg-teal-50;
+  }
+}

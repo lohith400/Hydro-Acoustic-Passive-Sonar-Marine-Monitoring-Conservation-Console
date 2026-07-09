@@ -2,13 +2,13 @@
  * App.jsx — Hydro-Acoustic Passive Sonar Marine Monitoring Console
  *
  * Design: full-bleed photographic hero (real ocean/cargo-ship photography,
- * Unsplash License — free for commercial use) with a moving gradient overlay
- * and subtle parallax, in the register of maritime brand sites like Negmar/CNCE.
- * Transitions into a calm, light instrument-panel console for the actual tool.
+ * Unsplash License — free for commercial use) with parallax + gradient-lit
+ * headline, a "why it matters" section grounded in real whale-strike data
+ * and the real Whale Safe monitoring system, then a calm light console
+ * with an ambient swimming whale behind the actual classifier tool.
  *
- * NOTE: colors here use arbitrary Tailwind values (bg-[#...]) rather than
- * theme extensions, so this renders correctly even if tailwind.config.js
- * hasn't been touched — no dependency on custom color tokens.
+ * NOTE: colors use arbitrary Tailwind values (bg-[#...]) rather than theme
+ * extensions, so this renders correctly regardless of tailwind.config.js.
  *
  * API: POST http://localhost:8000/api/v1/analyze-hydrophone
  *      Body: FormData { file: <wav File> }
@@ -42,6 +42,28 @@ function useParallax(strength = 14) {
     return () => window.removeEventListener('mousemove', handler);
   }, [strength]);
   return offset;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SwimmingWhale — ambient signature element for the console section
+// ─────────────────────────────────────────────────────────────────────────
+function SwimmingWhale() {
+  return (
+    <div className="absolute top-24 left-0 w-full overflow-hidden pointer-events-none opacity-[0.06] select-none">
+      <svg
+        viewBox="0 0 240 120"
+        className="w-40 md:w-56 animate-whale-swim"
+        fill="#1B4A43"
+      >
+        <path d="M10,60 C30,30 90,18 140,28 C175,35 195,42 220,40
+                 C205,55 180,64 155,62 C165,74 172,84 160,88
+                 C138,84 120,72 108,60 C68,72 30,70 12,64
+                 C6,63 6,61 10,60 Z" />
+        <path d="M220,40 C232,32 238,32 240,35 C232,42 224,44 220,40 Z" />
+        <circle cx="46" cy="52" r="2.4" fill="#FAF9F5" opacity="0.7" />
+      </svg>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -91,14 +113,14 @@ function Spinner() {
 // Main App
 // ─────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [file, setFile]         = useState(null);
-  const [uiState, setUiState]   = useState(STATE.IDLE);
-  const [scores, setScores]     = useState({ Container_Ship: 0, Marine_Mammal: 0 });
+  const [file, setFile] = useState(null);
+  const [uiState, setUiState] = useState(STATE.IDLE);
+  const [scores, setScores] = useState({ Container_Ship: 0, Marine_Mammal: 0 });
   const [errorMsg, setErrorMsg] = useState('');
   const [dragOver, setDragOver] = useState(false);
-  const inputRef                = useRef(null);
-  const consoleRef              = useRef(null);
-  const parallax                = useParallax(10);
+  const inputRef = useRef(null);
+  const consoleRef = useRef(null);
+  const parallax = useParallax(10);
 
   const accept = useCallback((f) => {
     if (!f) return;
@@ -127,11 +149,11 @@ export default function App() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res  = await fetch(API_ENDPOINT, { method: 'POST', body: form });
+      const res = await fetch(API_ENDPOINT, { method: 'POST', body: form });
       if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.statusText}`);
       const data = await res.json();
-      const ship   = data?.Container_Ship  ?? 0;
-      const mammal = data?.Marine_Mammal   ?? 0;
+      const ship = data?.Container_Ship ?? 0;
+      const mammal = data?.Marine_Mammal ?? 0;
       setScores({ Container_Ship: ship, Marine_Mammal: mammal });
       setUiState(mammal > ship ? STATE.MAMMAL : STATE.VESSEL);
     } catch (e) {
@@ -140,7 +162,7 @@ export default function App() {
     }
   };
 
-  const loading    = uiState === STATE.LOADING;
+  const loading = uiState === STATE.LOADING;
   const canAnalyse = !!file && !loading;
 
   const resultConfig = {
@@ -209,18 +231,21 @@ export default function App() {
 
         {/* Hero copy */}
         <div className="relative z-10 max-w-6xl mx-auto px-6 md:px-10 h-[calc(100%-88px)] flex flex-col justify-center">
-          <p className="inline-flex items-center gap-2 text-xs font-data text-[#8FD9C4] tracking-[0.15em] uppercase mb-6">
+          <p className="inline-flex items-center gap-2 text-[13px] font-data text-[#8FD9C4]/80 tracking-[0.2em] uppercase mb-7">
             <Waves className="w-3.5 h-3.5" />
             Passive sonar, tuned by deep learning
           </p>
 
-          <h1 className="font-display text-5xl md:text-7xl leading-[1.02] text-white max-w-3xl">
-            Built for oceans.
-            <br />
-            <span className="italic text-[#8FD9C4]">Tuned to whales.</span>
+          <h1 className="font-display text-6xl md:text-8xl leading-[0.98] tracking-tight">
+            <span className="block text-white drop-shadow-[0_2px_20px_rgba(0,0,0,0.35)]">
+              Listen to the ocean,
+            </span>
+            <span className="block italic mt-1 bg-gradient-to-r from-[#8FD9C4] via-[#B7E8D6] to-[#E8C97A] bg-clip-text text-transparent drop-shadow-[0_2px_24px_rgba(143,217,196,0.25)]">
+              tell ships from whales.
+            </span>
           </h1>
 
-          <p className="text-white/65 text-base md:text-lg max-w-xl mt-6 leading-relaxed">
+          <p className="text-white/60 text-lg md:text-xl max-w-xl mt-7 leading-relaxed font-light">
             A hydrophone stream, one waveform, two possible voices — the churn of a
             hull or the call of a whale. This console listens and tells them apart.
           </p>
@@ -258,8 +283,55 @@ export default function App() {
         </button>
       </div>
 
+      {/* ════════════════════════════ WHY THIS MATTERS — real-world grounding ════════════════════════════ */}
+      <section id="how" className="bg-[#0F2E2A] py-20">
+        <div className="max-w-5xl mx-auto px-6 md:px-10">
+          <p className="font-data text-xs text-[#8FD9C4]/70 tracking-[0.2em] uppercase mb-4 text-center">
+            Why it matters
+          </p>
+          <h2 className="font-display text-3xl md:text-4xl text-white text-center max-w-2xl mx-auto leading-tight">
+            Ships and whales already share these waters.
+            <br />
+            <span className="italic text-[#8FD9C4]">This is how they learn to coexist.</span>
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-14">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-7">
+              <p className="font-display text-4xl text-[#E8C97A]">~80</p>
+              <p className="text-sm text-white/70 mt-3 leading-relaxed">
+                Blue, humpback, and fin whales are estimated to die from vessel
+                strikes every year on the US West Coast alone.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-7">
+              <p className="font-display text-4xl text-[#8FD9C4]">5–17%</p>
+              <p className="text-sm text-white/70 mt-3 leading-relaxed">
+                Of whale carcasses from ship strikes are ever actually found —
+                the true toll is believed to be far higher.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-7">
+              <p className="font-display text-4xl text-[#C08A2E]">10 kn</p>
+              <p className="text-sm text-white/70 mt-3 leading-relaxed">
+                The voluntary vessel speed limit NOAA and the US Coast Guard ask
+                ships to observe in active whale zones — when they're warned in time.
+              </p>
+            </div>
+          </div>
+
+          <p className="text-white/40 text-sm text-center max-w-2xl mx-auto mt-10 leading-relaxed">
+            Real deployed systems like <span className="text-white/60">Whale Safe</span> — built by the
+            Benioff Ocean Science Laboratory with NOAA, Woods Hole, and UC Santa Barbara — already feed
+            live acoustic whale detections into exactly these slow-down decisions. This console is a
+            small-scale proof of concept in that same spirit.
+          </p>
+        </div>
+      </section>
+
       {/* ════════════════════════════ CONSOLE (light, functional register) ════════════════════════════ */}
-      <main ref={consoleRef} id="console" className="max-w-5xl mx-auto px-6 md:px-8 py-20">
+      <main ref={consoleRef} id="console" className="relative overflow-hidden max-w-5xl mx-auto px-6 md:px-8 py-20">
+        <SwimmingWhale />
+
         <div className="text-center mb-12">
           <p className="font-data text-xs text-[#1B4A43]/70 tracking-[0.2em] uppercase mb-3">
             Hydro-acoustic signal analysis

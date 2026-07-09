@@ -8,11 +8,31 @@ export default {
     extend: {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Consolas', 'monospace'],
+        display: ['Fraunces', 'serif'],
+        data: ['IBM Plex Mono', 'monospace'],
       },
-      animation: {
-        'pulse-slow': 'pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'spin-smooth': 'spin 1s linear infinite',
+      colors: {
+        paper: '#FAF9F5',
+        ink: '#16211F',
+        teal: {
+          50:  '#EEF5F3',
+          200: '#BFDAD3',
+          500: '#2F6E64',
+          700: '#1B4A43',
+          900: '#0F2E2A',
+        },
+        brass: {
+          400: '#C08A2E',
+          500: '#A9762A',
+        },
+        seaglass: {
+          400: '#3F9C77',
+          500: '#2F7A5C',
+        },
+        rust: {
+          400: '#C05B3C',
+          500: '#A6472D',
+        },
       },
     },
   },

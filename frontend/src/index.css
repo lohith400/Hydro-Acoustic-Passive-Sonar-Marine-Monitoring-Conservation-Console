@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,40 +10,44 @@
     font-family: 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  body { margin: 0; padding: 0; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #FAF9F5;
+  }
 }
 
-@keyframes ping-slow {
-  0%, 100% { transform: scale(1); opacity: 0.8; }
-  50%       { transform: scale(1.5); opacity: 0; }
-}
-@keyframes sonar {
-  0%   { transform: scale(0.8); opacity: 0.7; }
-  100% { transform: scale(2.6); opacity: 0; }
-}
-@keyframes spin-cw  { to { transform: rotate(360deg);  } }
-@keyframes spin-ccw { to { transform: rotate(-360deg); } }
-@keyframes bar-in {
-  from { width: 0%; }
-}
 @keyframes rise {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0);    }
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.18; }
-  50%       { opacity: 0.36; }
+@keyframes drift {
+  0%, 100% { transform: translateX(0); }
+  50%       { transform: translateX(-12px); }
 }
-@keyframes wave-bar {
-  0%, 100% { transform: scaleY(0.35); }
-  50%       { transform: scaleY(1);   }
+@keyframes spin-cw { to { transform: rotate(360deg); } }
+@keyframes ripple {
+  0%   { transform: scale(0.85); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes fill-line {
+  from { stroke-dashoffset: 1000; }
+  to   { stroke-dashoffset: 0; }
 }
 
 @layer utilities {
-  .font-mono-data { font-family: 'JetBrains Mono', 'Courier New', monospace; }
-  .animate-rise   { animation: rise 0.5s cubic-bezier(0.22,1,0.36,1) both; }
-  .animate-sonar  { animation: sonar 2.2s ease-out infinite; }
-  .animate-spin-cw  { animation: spin-cw  2.8s linear infinite; }
-  .animate-spin-ccw { animation: spin-ccw 4.2s linear infinite; }
-  .animate-pulse-glow { animation: pulse-glow 3s ease-in-out infinite; }
+  .font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+  .font-data    { font-family: 'IBM Plex Mono', monospace; }
+  .animate-rise    { animation: rise 0.6s cubic-bezier(0.22,1,0.36,1) both; }
+  .animate-drift   { animation: drift 8s ease-in-out infinite; }
+  .animate-spin-cw { animation: spin-cw 2.4s linear infinite; }
+  .animate-ripple  { animation: ripple 2.4s ease-out infinite; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

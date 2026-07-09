@@ -1,7 +1,7 @@
 # ============================================================
 # HYDRO-ACOUSTIC SONAR PROJECT — .gitignore
 # Only source code is pushed. All datasets, binaries, and
-# generated artifacts are excluded.
+# generated node modules / builds are excluded.
 # ============================================================
 
 # --- Python Bytecode & Cache ---
@@ -21,6 +21,12 @@ venv.bak/
 # --- Environment Variables ---
 .env
 .env.*
+
+# --- Node / Frontend Build & Deps ---
+node_modules/
+dist/
+dist-ssr/
+*.local
 
 # ============================================================
 # DATASET DIRECTORIES (auto-downloaded, never committed)
@@ -60,13 +66,6 @@ datasets_cache/
 saved_model/
 
 # ============================================================
-# JUPYTER NOTEBOOK OUTPUTS (optional — remove if you want to
-# commit notebooks WITH their outputs)
-# ============================================================
-# Uncomment the next line to ignore all notebooks entirely:
-# *.ipynb
-
-# ============================================================
 # LOGS & TEMP FILES
 # ============================================================
 *.log
@@ -81,6 +80,11 @@ runs/
 .vscode/
 .idea/
 *.code-workspace
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # ============================================================
 # OS-SPECIFIC FILES
